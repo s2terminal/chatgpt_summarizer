@@ -1,29 +1,32 @@
 import requests
-from typing import TypedDict, Literal, Union
+from typing import TypedDict, Literal
 
 from bs4 import BeautifulSoup
 import openai
 import streamlit
 
-def get_body(url: str):
+def get_body(url: str) -> str:
     response = requests.get(url)
     soup = BeautifulSoup(response.text, "html.parser")
     article = soup.find("article")
     if article is None:
         article = soup.find("body")
-    return article.get_text()
+    return article.get_text() # type: ignore
 
 class ChatMessage(TypedDict):
-    role: Union[Literal["system"], Literal["user"], Literal["assistant"]]
+    role: Literal["system", "user", "assistant"]
     content: str
 
 class Chat:
-    def __init__(self, model="gpt-3.5-turbo", stream=False) -> None:
+    def __init__(
+            self,
+            prompts: list[ChatMessage] = [],
+            model = 'gpt-3.5-turbo',
+            stream=False
+        ) -> None:
+        self.prompts = prompts
         self.model = model
         self.stream = stream
-
-    def set_prompt(self, prompts: list[ChatMessage]):
-        self.prompts = prompts
 
     def create(self):
         return openai.ChatCompletion.create(
@@ -38,16 +41,19 @@ def summarize_chat(url: str, model):
     与える文章を3行以内で要約し、1行あけて一言だけ意見を述べてください。
 
     要約と意見の両方とも、ですます調で丁寧な表現を使って出力してください。
-    日本語で回答してください。
+    すべての出力は日本語にしてください。
     """.strip()
 
-    chat = Chat(model=model, stream=True)
-    chat.set_prompt([
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": get_body(url)[:4000]}
-    ])
+    return Chat(
+        model=model,
+        prompts=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": get_body(url)}
+        ],
+        stream=True
+    )
 
-    return chat
+streamlit.title("記事要約")
 
 model = streamlit.radio("モデル", ('gpt-3.5-turbo', 'gpt-4'), index=0)
 input_url = streamlit.text_input('URL', placeholder='https://example.com')
@@ -61,7 +67,7 @@ if len(input_url) > 0:
         result_area = streamlit.empty()
         text = ''
         for chunk in completion:
-            next = chunk['choices'][0]['delta'].get('content', '')
+            next: str = chunk['choices'][0]['delta'].get('content', '') # type: ignore
             text += next
             if "。" in next:
                 text += "\n"
@@ -69,4 +75,3 @@ if len(input_url) > 0:
 
     with prompt_tab:
         streamlit.write(chat.prompts)
-
