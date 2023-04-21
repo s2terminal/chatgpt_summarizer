@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 import openai
 import streamlit
 
+MODELS = ('gpt-3.5-turbo', 'gpt-4')
+
 def get_body(url: str) -> str:
     response = requests.get(url)
     soup = BeautifulSoup(response.text, "html.parser")
@@ -53,25 +55,60 @@ def summarize_chat(url: str, model):
         stream=True
     )
 
-streamlit.title("記事要約")
+def stream_write(chunks, key=None):
+    result_area = streamlit.empty()
+    text = ''
+    for chunk in chunks:
+        next: str = chunk['choices'][0]['delta'].get('content', '') # type: ignore
+        text += next
+        if "。" in next:
+            text += "\n"
+        result_area.write(text, key=key)
+    return text
 
-model = streamlit.radio("モデル", ('gpt-3.5-turbo', 'gpt-4'), index=0)
-input_url = streamlit.text_input('URL', placeholder='https://example.com')
+sidebar = streamlit.sidebar.selectbox("Select Mode", ("要約", "チャット"))
 
-if len(input_url) > 0:
-    chat = summarize_chat(input_url, model)
-    completion = chat.create()
-    main_tab, prompt_tab = streamlit.tabs(["Result", "Prompt"])
+if sidebar == "要約":
+    streamlit.title("記事要約")
 
-    with main_tab:
-        result_area = streamlit.empty()
-        text = ''
-        for chunk in completion:
-            next: str = chunk['choices'][0]['delta'].get('content', '') # type: ignore
-            text += next
-            if "。" in next:
-                text += "\n"
-            result_area.write(text)
+    model = streamlit.radio("モデル", MODELS, index=0)
+    input_url = streamlit.text_input('URL', placeholder='https://example.com')
 
-    with prompt_tab:
-        streamlit.write(chat.prompts)
+    if len(input_url) > 0:
+        chat = summarize_chat(input_url, model)
+        completion = chat.create()
+        main_tab, prompt_tab = streamlit.tabs(["Result", "Prompt"])
+
+        with main_tab:
+            stream_write(completion)
+        with prompt_tab:
+            streamlit.write(chat.prompts)
+
+elif sidebar == "チャット":
+    prompts: list[ChatMessage] = []
+    model = streamlit.radio("モデル", MODELS, index=0)
+    if model is None:
+        streamlit.stop()
+    chat_widget = streamlit.empty()
+
+    @streamlit.cache_data
+    def cached_chat(prompts):
+        chat = Chat(
+            model=model,
+            prompts=prompts,
+            stream=True
+        )
+        completion = chat.create()
+        text = stream_write(completion, key=f'output_{prompts}')
+        return text
+
+    while True:
+        with chat_widget.container():
+            for prompt in prompts:
+                streamlit.write(prompt['content'])
+            input_text = streamlit.text_input('入力', key=f'input_{prompts}')
+            if len(input_text) == 0:
+                streamlit.stop()
+            prompts.append({"role": "user", "content": input_text})
+            text = cached_chat(prompts)
+            prompts.append({"role": "assistant", "content": text})
